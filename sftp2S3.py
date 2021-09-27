@@ -1,5 +1,6 @@
 from __future__ import print_function
 import boto3
+import botocore
 import os
 import sys
 import pysftp
@@ -62,16 +63,27 @@ def sftp2S3( evt, cxt ):
     sftp.close()
 
 def processFile( sftp, s3, f ):
-    local_file = '/tmp/' + f.filename
-    log.info( '--> Downloading %s from SFTP server' % f.filename )
-    sftp.get( f.filename, local_file )
-    log.info( '--> Uploading %s to S3 bucket (%s)' % ( f.filename, s3_bucket ) )
-    s3.upload_file( local_file, s3_bucket, f.filename )
-    log.info( '--> Cleaning up %s locally' % f.filename )
-    os.remove( local_file )
-    if cleanSftpFiles:
-        deleteSftpFile( sftp, f )
-
+    try:
+        s3.Object(s3_bucket , f.filename).load()
+    except botocore.exceptions.ClientError as e:
+        if e.response['Error']['Code'] == "404":
+            # The object does not exist.
+            local_file = '/tmp/' + f.filename
+            log.info( '--> Downloading %s from SFTP server' % f.filename )
+            sftp.get( f.filename, local_file )
+            log.info( '--> Uploading %s to S3 bucket (%s)' % ( f.filename, s3_bucket ) )
+            s3.upload_file( local_file, s3_bucket, f.filename )
+            log.info( '--> Cleaning up %s locally' % f.filename )
+            os.remove( local_file )
+            if cleanSftpFiles:
+                deleteSftpFile( sftp, f )
+        else:
+            # Something else has gone wrong.
+            raise
+    else:
+        # The object does exist.
+        log.info( '--> File %s exits and is not replaced' % f.filename )
+    
 def deleteSftpFile( sftp, f ):
     log.info( '--> Cleaning up %s on SFTP server' % f.filename )
     sftp.remove( f.filename )
